@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+type problem struct {
+	question string
+	answer   string
+}
+
 func main() {
 
 	filename := flag.String("filename", "problems.csv", "Name of the csv file to use as question bank.")
@@ -28,7 +33,7 @@ func main() {
 	//defer schedules a function call to be run immediately before the function executing the defer returns
 	defer file.Close()
 
-	//create a new Reader from the file then do one priming read from it
+	//create a new Reader from the file then read all lines from the file
 	csvReader := csv.NewReader(file)
 	records, err := csvReader.ReadAll()
 
@@ -36,23 +41,33 @@ func main() {
 		log.Fatal(err)
 	}
 
+	//parse the lines read from the CSV into a slice of problem structs
+	problems := parseLines(records)
+
+	//if the flag is true shuffle the list of questions
 	if *shuffle {
-		for i := range records {
+		for i := range problems {
 			ix := rand.Intn(i + 1)
-			records[i], records[ix] = records[ix], records[i]
+			problems[i], problems[ix] = problems[ix], problems[i]
 		}
 	}
 
-	//initialize channel for user answers and int to count correct answers
+	//initialize channel for user answers and counter for correct answers
 	answerCh := make(chan string)
 	correct := 0
 
+	//initialize timer to run during the course of the quiz
 	clock := time.NewTimer(time.Duration(*limit) * time.Second)
-questionLoop:
-	for i, record := range records {
-		//increment number of questions asked and ask the question
-		fmt.Printf("Problem #%d: %s = ", i+1, strings.TrimSpace(record[0]))
 
+questionLoop:
+
+	//for each quiz question, print it and try to get a answer from user or what for timer to run out
+	for i, entry := range problems {
+
+		//print the question to the user, triming leading and trailing spaces
+		fmt.Printf("Problem #%d: %s = ", i+1, entry.question)
+
+		//in a goroutine read input from user and send through answer channel
 		go func() {
 			var answer string
 			_, err := fmt.Scan(&answer)
@@ -63,16 +78,36 @@ questionLoop:
 			answerCh <- strings.ToLower(strings.TrimSpace(answer))
 		}()
 
+		//handle timer or user input, whichever comes in first
 		select {
+
+		//CASE: timer ended first
+		//EFFECT: break out of loop asking driving the quiz
 		case <-clock.C:
 			break questionLoop
+
+		//CASE: user answered before timer ended
+		//EFFECT: trim leading/trailing spaces from user input and increment counter if it matches correct answer
 		case answer := <-answerCh:
-			if strings.ToLower(strings.TrimSpace(answer)) == record[1] {
+			if answer == entry.answer {
 				correct++
 			}
 		}
 	}
 
-	//Base case of answering all the questions before time runs out
+	//inform user of their score before terminating
 	fmt.Printf("\nYou scored %d out of %d total.\n", correct, len(records))
+}
+
+func parseLines(records [][]string) []problem {
+	//initialize a slice to store the new structs
+	problems := make([]problem, len(records))
+
+	//for each line read in from the CSV, turn trim the spaces from its question and answer and create a problem struct of it
+	for i, record := range records {
+		problems[i] = problem{question: strings.TrimSpace(record[0]), answer: strings.TrimSpace(record[1])}
+	}
+
+	//return the slice of problems to the user
+	return problems
 }
